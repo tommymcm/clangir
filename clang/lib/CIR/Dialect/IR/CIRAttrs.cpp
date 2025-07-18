@@ -26,6 +26,7 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 
+#include "clang/CIR/Interfaces/CIRTypeInterfaces.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -33,10 +34,31 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/ExprCXX.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/SMLoc.h"
+
+//===-----------------------------------------------------------------===//
+// RecordMembers
+//===-----------------------------------------------------------------===//
 
 static void printRecordMembers(mlir::AsmPrinter &p, mlir::ArrayAttr members);
 static mlir::ParseResult parseRecordMembers(::mlir::AsmParser &parser,
                                             mlir::ArrayAttr &members);
+
+//===-----------------------------------------------------------------===//
+// IntLiteral
+//===-----------------------------------------------------------------===//
+
+static void printIntLiteral(mlir::AsmPrinter &p, llvm::APInt value,
+                            cir::IntTypeInterface ty);
+
+static mlir::ParseResult parseIntLiteral(mlir::AsmParser &parser,
+                                         llvm::APInt &value,
+                                         cir::IntTypeInterface ty);
+
+//===-----------------------------------------------------------------===//
+// FloatLiteral
+//===-----------------------------------------------------------------===//
 
 static void printFloatLiteral(mlir::AsmPrinter &p, llvm::APFloat value,
                               mlir::Type ty);
@@ -49,6 +71,19 @@ static mlir::ParseResult parseConstPtr(mlir::AsmParser &parser,
                                        mlir::IntegerAttr &value);
 
 static void printConstPtr(mlir::AsmPrinter &p, mlir::IntegerAttr value);
+
+//===----------------------------------------------------------------------===//
+// AddressSpaceAttr
+//===----------------------------------------------------------------------===//
+
+mlir::ParseResult parseAddressSpaceValue(mlir::AsmParser &p,
+                                         cir::AddressSpace &addrSpace);
+
+void printAddressSpaceValue(mlir::AsmPrinter &p, cir::AddressSpace addrSpace);
+
+//===----------------------------------------------------------------------===//
+// Tablegen defined attributes
+//===----------------------------------------------------------------------===//
 
 #define GET_ATTRDEF_CLASSES
 #include "clang/CIR/Dialect/IR/CIROpsAttributes.cpp.inc"
@@ -204,65 +239,52 @@ static void printConstPtr(AsmPrinter &p, mlir::IntegerAttr value) {
 // IntAttr definitions
 //===----------------------------------------------------------------------===//
 
-Attribute IntAttr::parse(AsmParser &parser, Type odsType) {
-  mlir::APInt APValue;
-
-  if (!mlir::isa<IntType>(odsType))
-    return {};
-  auto type = mlir::cast<IntType>(odsType);
-
-  // Consume the '<' symbol.
-  if (parser.parseLess())
-    return {};
-
-  // Fetch arbitrary precision integer value.
-  if (type.isSigned()) {
-    int64_t value;
-    if (parser.parseInteger(value))
-      parser.emitError(parser.getCurrentLocation(), "expected integer value");
-    APValue = mlir::APInt(type.getWidth(), value, type.isSigned(),
-                          /*implicitTrunc=*/true);
-    if (APValue.getSExtValue() != value)
-      parser.emitError(parser.getCurrentLocation(),
-                       "integer value too large for the given type");
+template <typename IntT>
+static bool isTooLargeForType(const mlir::APInt &v, IntT expectedValue) {
+  if constexpr (std::is_signed_v<IntT>) {
+    return v.getSExtValue() != expectedValue;
   } else {
-    uint64_t value;
-    if (parser.parseInteger(value))
-      parser.emitError(parser.getCurrentLocation(), "expected integer value");
-    APValue = mlir::APInt(type.getWidth(), value, type.isSigned(),
-                          /*implicitTrunc=*/true);
-    if (APValue.getZExtValue() != value)
-      parser.emitError(parser.getCurrentLocation(),
-                       "integer value too large for the given type");
+    return v.getZExtValue() != expectedValue;
   }
-
-  // Consume the '>' symbol.
-  if (parser.parseGreater())
-    return {};
-
-  return IntAttr::get(type, APValue);
 }
 
-void IntAttr::print(AsmPrinter &printer) const {
-  auto type = mlir::cast<IntType>(getType());
-  printer << '<';
-  if (type.isSigned())
-    printer << getSInt();
+template <typename IntT>
+static ParseResult parseIntLiteralImpl(mlir::AsmParser &p, llvm::APInt &value,
+                                       cir::IntTypeInterface ty) {
+  IntT ivalue;
+  const bool isSigned = ty.isSigned();
+  if (p.parseInteger(ivalue))
+    return p.emitError(p.getCurrentLocation(), "expected integer value");
+
+  value = mlir::APInt(ty.getWidth(), ivalue, isSigned, /*implicitTrunc=*/true);
+  if (isTooLargeForType(value, ivalue))
+
+    return p.emitError(p.getCurrentLocation(),
+                       "integer value too large for the given type");
+
+  return success();
+}
+
+mlir::ParseResult parseIntLiteral(mlir::AsmParser &parser, llvm::APInt &value,
+                                  cir::IntTypeInterface ty) {
+  if (ty.isSigned())
+    return parseIntLiteralImpl<int64_t>(parser, value, ty);
+  return parseIntLiteralImpl<uint64_t>(parser, value, ty);
+}
+
+void printIntLiteral(mlir::AsmPrinter &p, llvm::APInt value,
+                     cir::IntTypeInterface ty) {
+  if (ty.isSigned())
+    p << value.getSExtValue();
   else
-    printer << getUInt();
-  printer << '>';
+    p << value.getZExtValue();
 }
 
 LogicalResult IntAttr::verify(function_ref<InFlightDiagnostic()> emitError,
-                              Type type, APInt value) {
-  if (!mlir::isa<IntType>(type))
-    return emitError() << "expected 'simple.int' type";
-
-  auto intType = mlir::cast<IntType>(type);
-  if (value.getBitWidth() != intType.getWidth())
+                              cir::IntTypeInterface type, llvm::APInt value) {
+  if (value.getBitWidth() != type.getWidth())
     return emitError() << "type and value bitwidth mismatch: "
-                       << intType.getWidth() << " != " << value.getBitWidth();
-
+                       << type.getWidth() << " != " << value.getBitWidth();
   return success();
 }
 
@@ -481,8 +503,8 @@ LogicalResult
 GlobalAnnotationValuesAttr::verify(function_ref<InFlightDiagnostic()> emitError,
                                    mlir::ArrayAttr annotations) {
   if (annotations.empty())
-    return emitError()
-           << "GlobalAnnotationValuesAttr should at least have one annotation";
+    return emitError() << "GlobalAnnotationValuesAttr should at least have "
+                          "one annotation";
 
   for (auto &entry : annotations) {
     auto annoEntry = ::mlir::dyn_cast<mlir::ArrayAttr>(entry);
@@ -551,52 +573,6 @@ LogicalResult DynamicCastInfoAttr::verify(
     return emitError() << "destRtti must be an RTTI pointer";
 
   return success();
-}
-
-//===----------------------------------------------------------------------===//
-// AddressSpaceAttr definitions
-//===----------------------------------------------------------------------===//
-
-std::optional<int32_t>
-AddressSpaceAttr::getValueFromLangAS(clang::LangAS langAS) {
-  using clang::LangAS;
-  switch (langAS) {
-  case LangAS::Default:
-    // Default address space should be encoded as a null attribute.
-    return std::nullopt;
-  case LangAS::opencl_global:
-    return Kind::offload_global;
-  case LangAS::opencl_local:
-  case LangAS::cuda_shared:
-    // Local means local among the work-group (OpenCL) or block (CUDA).
-    // All threads inside the kernel can access local memory.
-    return Kind::offload_local;
-  case LangAS::cuda_device:
-    return Kind::offload_global;
-  case LangAS::opencl_constant:
-  case LangAS::cuda_constant:
-    return Kind::offload_constant;
-  case LangAS::opencl_private:
-    return Kind::offload_private;
-  case LangAS::opencl_generic:
-    return Kind::offload_generic;
-  case LangAS::opencl_global_device:
-  case LangAS::opencl_global_host:
-  case LangAS::sycl_global:
-  case LangAS::sycl_global_device:
-  case LangAS::sycl_global_host:
-  case LangAS::sycl_local:
-  case LangAS::sycl_private:
-  case LangAS::ptr32_sptr:
-  case LangAS::ptr32_uptr:
-  case LangAS::ptr64:
-  case LangAS::hlsl_groupshared:
-  case LangAS::wasm_funcref:
-    llvm_unreachable("NYI");
-  default:
-    // Target address space offset arithmetics
-    return clang::toTargetAddressSpace(langAS) + kFirstTargetASValue;
-  }
 }
 
 //===----------------------------------------------------------------------===//

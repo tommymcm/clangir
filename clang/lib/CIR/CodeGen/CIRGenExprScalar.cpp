@@ -178,9 +178,8 @@ public:
   // Leaves.
   mlir::Value VisitIntegerLiteral(const IntegerLiteral *E) {
     mlir::Type Ty = CGF.convertType(E->getType());
-    return Builder.create<cir::ConstantOp>(
-        CGF.getLoc(E->getExprLoc()),
-        Builder.getAttr<cir::IntAttr>(Ty, E->getValue()));
+    return Builder.getConstAPInt(CGF.getLoc(E->getExprLoc()), Ty,
+                                 E->getValue());
   }
 
   mlir::Value VisitFixedPointLiteral(const FixedPointLiteral *E) {
@@ -189,9 +188,8 @@ public:
   mlir::Value VisitFloatingLiteral(const FloatingLiteral *E) {
     mlir::Type Ty = CGF.convertType(E->getType());
     assert(mlir::isa<cir::FPTypeInterface>(Ty) && "expect floating-point type");
-    return Builder.create<cir::ConstantOp>(
-        CGF.getLoc(E->getExprLoc()),
-        Builder.getAttr<cir::FPAttr>(Ty, E->getValue()));
+    return Builder.create<cir::ConstantOp>(CGF.getLoc(E->getExprLoc()),
+                                           cir::FPAttr::get(Ty, E->getValue()));
   }
   mlir::Value VisitCharacterLiteral(const CharacterLiteral *E) {
     mlir::Type Ty = CGF.convertType(E->getType());
@@ -1661,10 +1659,10 @@ mlir::Value ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
     }
     // Since target may map different address spaces in AST to the same address
     // space, an address space conversion may end up as a bitcast.
-    auto SrcAS = CGF.builder.getAddrSpaceAttr(
+    cir::AddressSpace SrcAS = cir::toCIRAddressSpace(
         E->getType()->getPointeeType().getAddressSpace());
-    auto DestAS = CGF.builder.getAddrSpaceAttr(
-        DestTy->getPointeeType().getAddressSpace());
+    cir::AddressSpace DestAS =
+        cir::toCIRAddressSpace(DestTy->getPointeeType().getAddressSpace());
     return CGF.CGM.getTargetCIRGenInfo().performAddrSpaceCast(
         CGF, Visit(E), SrcAS, DestAS, convertType(DestTy));
   }

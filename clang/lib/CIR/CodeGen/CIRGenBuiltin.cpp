@@ -1652,8 +1652,8 @@ RValue CIRGenFunction::emitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     // the AST level this is handled within CreateTempAlloca et al., but for the
     // builtin / dynamic alloca we have to handle it here.
     assert(!cir::MissingFeatures::addressSpace());
-    auto AAS = getCIRAllocaAddressSpace();
-    auto EAS = builder.getAddrSpaceAttr(
+    cir::AddressSpace AAS = getCIRAllocaAddressSpace();
+    cir::AddressSpace EAS = cir::toCIRAddressSpace(
         E->getType()->getPointeeType().getAddressSpace());
     if (EAS != AAS) {
       assert(false && "Non-default address space for alloca NYI");
@@ -2608,9 +2608,10 @@ RValue CIRGenFunction::emitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
   // can move this up to the beginning of the function.
   //   checkTargetFeatures(E, FD);
 
-  if ([[maybe_unused]] unsigned VectorWidth =
-          getContext().BuiltinInfo.getRequiredVectorWidth(BuiltinID))
-    llvm_unreachable("NYI");
+  if (unsigned vectorWidth =
+          getContext().BuiltinInfo.getRequiredVectorWidth(BuiltinID)) {
+    LargestVectorWidth = std::max(LargestVectorWidth, vectorWidth);
+  }
 
   // See if we have a target specific intrinsic.
   std::string Name = getContext().BuiltinInfo.getName(BuiltinID);

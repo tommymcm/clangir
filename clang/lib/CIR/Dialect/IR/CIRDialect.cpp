@@ -1216,6 +1216,104 @@ LogicalResult cir::VecShuffleDynamicOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// VecCmpOp
+//===----------------------------------------------------------------------===//
+
+OpFoldResult cir::VecCmpOp::fold(FoldAdaptor adaptor) {
+  auto lhsVecAttr =
+      mlir::dyn_cast_if_present<cir::ConstVectorAttr>(adaptor.getLhs());
+  auto rhsVecAttr =
+      mlir::dyn_cast_if_present<cir::ConstVectorAttr>(adaptor.getRhs());
+  if (!lhsVecAttr || !rhsVecAttr)
+    return {};
+
+  mlir::Type inputElemTy =
+      mlir::cast<cir::VectorType>(lhsVecAttr.getType()).getElementType();
+  if (!isAnyIntegerOrFloatingPointType(inputElemTy))
+    return {};
+
+  cir::CmpOpKind opKind = adaptor.getKind();
+  mlir::ArrayAttr lhsVecElhs = lhsVecAttr.getElts();
+  mlir::ArrayAttr rhsVecElhs = rhsVecAttr.getElts();
+  uint64_t vecSize = lhsVecElhs.size();
+
+  SmallVector<mlir::Attribute, 16> elements(vecSize);
+  bool isIntAttr = vecSize && mlir::isa<cir::IntAttr>(lhsVecElhs[0]);
+  for (uint64_t i = 0; i < vecSize; i++) {
+    mlir::Attribute lhsAttr = lhsVecElhs[i];
+    mlir::Attribute rhsAttr = rhsVecElhs[i];
+    int cmpResult = 0;
+    switch (opKind) {
+    case cir::CmpOpKind::lt: {
+      if (isIntAttr) {
+        cmpResult = mlir::cast<cir::IntAttr>(lhsAttr).getSInt() <
+                    mlir::cast<cir::IntAttr>(rhsAttr).getSInt();
+      } else {
+        cmpResult = mlir::cast<cir::FPAttr>(lhsAttr).getValue() <
+                    mlir::cast<cir::FPAttr>(rhsAttr).getValue();
+      }
+      break;
+    }
+    case cir::CmpOpKind::le: {
+      if (isIntAttr) {
+        cmpResult = mlir::cast<cir::IntAttr>(lhsAttr).getSInt() <=
+                    mlir::cast<cir::IntAttr>(rhsAttr).getSInt();
+      } else {
+        cmpResult = mlir::cast<cir::FPAttr>(lhsAttr).getValue() <=
+                    mlir::cast<cir::FPAttr>(rhsAttr).getValue();
+      }
+      break;
+    }
+    case cir::CmpOpKind::gt: {
+      if (isIntAttr) {
+        cmpResult = mlir::cast<cir::IntAttr>(lhsAttr).getSInt() >
+                    mlir::cast<cir::IntAttr>(rhsAttr).getSInt();
+      } else {
+        cmpResult = mlir::cast<cir::FPAttr>(lhsAttr).getValue() >
+                    mlir::cast<cir::FPAttr>(rhsAttr).getValue();
+      }
+      break;
+    }
+    case cir::CmpOpKind::ge: {
+      if (isIntAttr) {
+        cmpResult = mlir::cast<cir::IntAttr>(lhsAttr).getSInt() >=
+                    mlir::cast<cir::IntAttr>(rhsAttr).getSInt();
+      } else {
+        cmpResult = mlir::cast<cir::FPAttr>(lhsAttr).getValue() >=
+                    mlir::cast<cir::FPAttr>(rhsAttr).getValue();
+      }
+      break;
+    }
+    case cir::CmpOpKind::eq: {
+      if (isIntAttr) {
+        cmpResult = mlir::cast<cir::IntAttr>(lhsAttr).getSInt() ==
+                    mlir::cast<cir::IntAttr>(rhsAttr).getSInt();
+      } else {
+        cmpResult = mlir::cast<cir::FPAttr>(lhsAttr).getValue() ==
+                    mlir::cast<cir::FPAttr>(rhsAttr).getValue();
+      }
+      break;
+    }
+    case cir::CmpOpKind::ne: {
+      if (isIntAttr) {
+        cmpResult = mlir::cast<cir::IntAttr>(lhsAttr).getSInt() !=
+                    mlir::cast<cir::IntAttr>(rhsAttr).getSInt();
+      } else {
+        cmpResult = mlir::cast<cir::FPAttr>(lhsAttr).getValue() !=
+                    mlir::cast<cir::FPAttr>(rhsAttr).getValue();
+      }
+      break;
+    }
+    }
+
+    elements[i] = cir::IntAttr::get(getType().getElementType(), cmpResult);
+  }
+
+  return cir::ConstVectorAttr::get(
+      getType(), mlir::ArrayAttr::get(getContext(), elements));
+}
+
+//===----------------------------------------------------------------------===//
 // VecExtractOp
 //===----------------------------------------------------------------------===//
 
@@ -2007,16 +2105,6 @@ static void printConstant(OpAsmPrinter &p, Attribute value) {
   p.printAttribute(value);
 }
 
-static ParseResult
-parseGlobalOpAddrSpace(OpAsmParser &p, cir::AddressSpaceAttr &addrSpaceAttr) {
-  return parseAddrSpaceAttribute(p, addrSpaceAttr);
-}
-
-static void printGlobalOpAddrSpace(OpAsmPrinter &p, cir::GlobalOp op,
-                                   cir::AddressSpaceAttr addrSpaceAttr) {
-  printAddrSpaceAttribute(p, addrSpaceAttr);
-}
-
 static void printGlobalOpTypeAndInitialValue(OpAsmPrinter &p, cir::GlobalOp op,
                                              TypeAttr type, Attribute initAttr,
                                              mlir::Region &ctorRegion,
@@ -2189,7 +2277,7 @@ LogicalResult cir::GlobalOp::verify() {
 void cir::GlobalOp::build(
     OpBuilder &odsBuilder, OperationState &odsState, llvm::StringRef sym_name,
     Type sym_type, bool isConstant, cir::GlobalLinkageKind linkage,
-    cir::AddressSpaceAttr addrSpace,
+    cir::AddressSpace addrSpace,
     function_ref<void(OpBuilder &, Location)> ctorBuilder,
     function_ref<void(OpBuilder &, Location)> dtorBuilder) {
   odsState.addAttribute(getSymNameAttrName(odsState.name),
@@ -2204,8 +2292,9 @@ void cir::GlobalOp::build(
       cir::GlobalLinkageKindAttr::get(odsBuilder.getContext(), linkage);
   odsState.addAttribute(getLinkageAttrName(odsState.name), linkageAttr);
 
-  if (addrSpace)
-    odsState.addAttribute(getAddrSpaceAttrName(odsState.name), addrSpace);
+  odsState.addAttribute(
+      getAddrSpaceAttrName(odsState.name),
+      cir::AddressSpaceAttr::get(odsBuilder.getContext(), addrSpace));
 
   Region *ctorRegion = odsState.addRegion();
   if (ctorBuilder) {
@@ -2268,10 +2357,10 @@ cir::GetGlobalOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
            << "' does not reference a valid cir.global or cir.func";
 
   mlir::Type symTy;
-  cir::AddressSpaceAttr symAddrSpace{};
+  cir::AddressSpace symAddrSpace{};
   if (auto g = dyn_cast<GlobalOp>(op)) {
     symTy = g.getSymType();
-    symAddrSpace = g.getAddrSpaceAttr();
+    symAddrSpace = g.getAddrSpace();
     // Verify that for thread local global access, the global needs to
     // be marked with tls bits.
     if (getTls() && !g.getTlsModel())
@@ -2563,35 +2652,35 @@ ParseResult cir::FuncOp::parse(OpAsmParser &parser, OperationState &state) {
           llvm::function_ref<void(std::optional<int> prio)> createAttr)
       -> mlir::LogicalResult {
     if (::mlir::succeeded(parser.parseOptionalKeyword(keyword))) {
-      std::optional<int> prio;
+      std::optional<int> priority;
       if (mlir::succeeded(parser.parseOptionalLParen())) {
         auto parsedPrio = mlir::FieldParser<int>::parse(parser);
         if (mlir::failed(parsedPrio))
           return parser.emitError(parser.getCurrentLocation(),
                                   "failed to parse 'priority', of type 'int'");
-        prio = parsedPrio.value_or(int());
+        priority = parsedPrio.value_or(int());
         // Parse literal ')'
         if (parser.parseRParen())
           return failure();
       }
-      createAttr(prio);
+      createAttr(priority);
     }
     return success();
   };
 
-  if (parseGlobalDtorCtor("global_ctor", [&](std::optional<int> prio) {
-        cir::GlobalCtorAttr globalCtorAttr =
-            prio ? cir::GlobalCtorAttr::get(nameAttr, *prio)
-                 : cir::GlobalCtorAttr::get(nameAttr);
-        state.addAttribute(getGlobalCtorAttrName(state.name), globalCtorAttr);
+  if (parseGlobalDtorCtor("global_ctor", [&](std::optional<int> priority) {
+        auto globalCtorPriorityAttr = builder.getI32IntegerAttr(
+            priority ? *priority : DefaultGlobalCtorDtorPriority);
+        state.addAttribute(getGlobalCtorPriorityAttrName(state.name),
+                           globalCtorPriorityAttr);
       }).failed())
     return failure();
 
-  if (parseGlobalDtorCtor("global_dtor", [&](std::optional<int> prio) {
-        cir::GlobalDtorAttr globalDtorAttr =
-            prio ? cir::GlobalDtorAttr::get(nameAttr, *prio)
-                 : cir::GlobalDtorAttr::get(nameAttr);
-        state.addAttribute(getGlobalDtorAttrName(state.name), globalDtorAttr);
+  if (parseGlobalDtorCtor("global_dtor", [&](std::optional<int> priority) {
+        auto globalDtorPriorityAttr = builder.getI32IntegerAttr(
+            priority ? *priority : DefaultGlobalCtorDtorPriority);
+        state.addAttribute(getGlobalDtorPriorityAttrName(state.name),
+                           globalDtorPriorityAttr);
       }).failed())
     return failure();
 
@@ -2705,9 +2794,9 @@ void cir::FuncOp::print(OpAsmPrinter &p) {
       // These are all omitted since they are custom printed already.
       {getAliaseeAttrName(), getBuiltinAttrName(), getCoroutineAttrName(),
        getDsoLocalAttrName(), getExtraAttrsAttrName(),
-       getFunctionTypeAttrName(), getGlobalCtorAttrName(),
-       getGlobalDtorAttrName(), getLambdaAttrName(), getLinkageAttrName(),
-       getCallingConvAttrName(), getNoProtoAttrName(),
+       getFunctionTypeAttrName(), getGlobalCtorPriorityAttrName(),
+       getGlobalDtorPriorityAttrName(), getLambdaAttrName(),
+       getLinkageAttrName(), getCallingConvAttrName(), getNoProtoAttrName(),
        getSymVisibilityAttrName(), getArgAttrsAttrName(), getResAttrsAttrName(),
        getComdatAttrName(), getGlobalVisibilityAttrName(),
        getAnnotationsAttrName()});
@@ -2724,16 +2813,16 @@ void cir::FuncOp::print(OpAsmPrinter &p) {
     p << ")";
   }
 
-  if (auto globalCtor = getGlobalCtorAttr()) {
+  if (auto globalCtorPriority = getGlobalCtorPriority()) {
     p << " global_ctor";
-    if (!globalCtor.isDefaultPriority())
-      p << "(" << globalCtor.getPriority() << ")";
+    if (globalCtorPriority.value() != DefaultGlobalCtorDtorPriority)
+      p << "(" << globalCtorPriority.value() << ")";
   }
 
-  if (auto globalDtor = getGlobalDtorAttr()) {
+  if (auto globalDtorPriority = getGlobalDtorPriority()) {
     p << " global_dtor";
-    if (!globalDtor.isDefaultPriority())
-      p << "(" << globalDtor.getPriority() << ")";
+    if (globalDtorPriority.value() != DefaultGlobalCtorDtorPriority)
+      p << "(" << globalDtorPriority.value() << ")";
   }
 
   if (!getExtraAttrs().getElements().empty()) {

@@ -617,6 +617,11 @@ module {
 module {
   // expected-error@below {{integer value too large for the given type}}
   cir.global external @a = #cir.int<256> : !cir.int<u, 8>
+}
+
+// -----
+
+module {
   // expected-error@below {{integer value too large for the given type}}
   cir.global external @b = #cir.int<-129> : !cir.int<s, 8>
 }
@@ -947,8 +952,8 @@ module {
 !u32i = !cir.int<u, 32>
 
 cir.func @clrsb_invalid_input_ty(%arg0 : !u32i) -> () {
-  // expected-error@+1 {{'cir.bit.clrsb' op operand #0 must be signed integer type of widths 32/64, but got '!cir.int<u, 32>'}}
-  %0 = cir.bit.clrsb(%arg0 : !u32i) : !u32i
+  // expected-error@+1 {{'cir.clrsb' op operand #0 must be signed integer type of widths 32/64, but got '!cir.int<u, 32>'}}
+  %0 = cir.clrsb %arg0 : !u32i
   cir.return
 }
 
@@ -957,9 +962,9 @@ cir.func @clrsb_invalid_input_ty(%arg0 : !u32i) -> () {
 !s32i = !cir.int<s, 32>
 !u32i = !cir.int<u, 32>
 
-cir.func @clrsb_invalid_result_ty(%arg0 : !s32i) -> () {
-  // expected-error@+1 {{'cir.bit.clrsb' op result #0 must be signed integer type of widths 32/64, but got '!cir.int<u, 32>'}}
-  %0 = cir.bit.clrsb(%arg0 : !s32i) : !u32i
+cir.func @clrsb_invalid_result_ty(%arg0 : !s32i) -> () {  // expected-note {{prior use here}}
+  // expected-error@+1 {{use of value '%arg0' expects different type than prior uses: '!cir.int<u, 32>' vs '!cir.int<s, 32>'}}
+  %0 = cir.clrsb %arg0 : !u32i
   cir.return
 }
 
@@ -968,8 +973,8 @@ cir.func @clrsb_invalid_result_ty(%arg0 : !s32i) -> () {
 !s32i = !cir.int<s, 32>
 
 cir.func @clz_invalid_input_ty(%arg0 : !s32i) -> () {
-  // expected-error@+1 {{'cir.bit.clz' op operand #0 must be unsigned integer type of widths 16/32/64, but got '!cir.int<s, 32>'}}
-  %0 = cir.bit.clz(%arg0 : !s32i) zero_poison : !s32i
+  // expected-error@+1 {{'cir.clz' op operand #0 must be unsigned integer type of widths 16/32/64, but got '!cir.int<s, 32>'}}
+  %0 = cir.clz %arg0 zero_poison : !s32i
   cir.return
 }
 
@@ -978,9 +983,9 @@ cir.func @clz_invalid_input_ty(%arg0 : !s32i) -> () {
 !u32i = !cir.int<u, 32>
 !s32i = !cir.int<s, 32>
 
-cir.func @clz_invalid_result_ty(%arg0 : !u32i) -> () {
-  // expected-error@+1 {{'cir.bit.clz' op result #0 must be unsigned integer type of widths 16/32/64, but got '!cir.int<s, 32>'}}
-  %0 = cir.bit.clz(%arg0 : !u32i) : !s32i
+cir.func @clz_invalid_result_ty(%arg0 : !u32i) -> () {  // expected-note {{prior use here}}
+  // expected-error@+1 {{use of value '%arg0' expects different type than prior uses: '!cir.int<s, 32>' vs '!cir.int<u, 32>'}}
+  %0 = cir.clz %arg0 : !s32i
   cir.return
 }
 
@@ -989,8 +994,8 @@ cir.func @clz_invalid_result_ty(%arg0 : !u32i) -> () {
 !s32i = !cir.int<s, 32>
 
 cir.func @ctz_invalid_input_ty(%arg0 : !s32i) -> () {
-  // expected-error@+1 {{'cir.bit.ctz' op operand #0 must be unsigned integer type of widths 16/32/64, but got '!cir.int<s, 32>'}}
-  %0 = cir.bit.ctz(%arg0 : !s32i) zero_poison : !s32i
+  // expected-error@+1 {{'cir.ctz' op operand #0 must be unsigned integer type of widths 16/32/64, but got '!cir.int<s, 32>'}}
+  %0 = cir.ctz %arg0 zero_poison : !s32i
   cir.return
 }
 
@@ -999,9 +1004,9 @@ cir.func @ctz_invalid_input_ty(%arg0 : !s32i) -> () {
 !u32i = !cir.int<u, 32>
 !s32i = !cir.int<s, 32>
 
-cir.func @ctz_invalid_result_ty(%arg0 : !u32i) -> () {
-  // expected-error@+1 {{'cir.bit.ctz' op result #0 must be unsigned integer type of widths 16/32/64, but got '!cir.int<s, 32>'}}
-  %0 = cir.bit.ctz(%arg0 : !u32i) : !s32i
+cir.func @ctz_invalid_result_ty(%arg0 : !u32i) -> () {  // expected-note {{prior use here}}
+  // expected-error@+1 {{use of value '%arg0' expects different type than prior uses: '!cir.int<s, 32>' vs '!cir.int<u, 32>'}}
+  %0 = cir.ctz %arg0 : !s32i
   cir.return
 }
 
@@ -1010,9 +1015,9 @@ cir.func @ctz_invalid_result_ty(%arg0 : !u32i) -> () {
 !s32i = !cir.int<s, 32>
 !u32i = !cir.int<u, 32>
 
-cir.func @ffs_invalid_input_ty(%arg0 : !u32i) -> () {
-  // expected-error@+1 {{'cir.bit.ffs' op operand #0 must be signed integer type of widths 32/64, but got '!cir.int<u, 32>'}}
-  %0 = cir.bit.ffs(%arg0 : !u32i) : !s32i
+cir.func @ffs_invalid_input_ty(%arg0 : !u32i) -> () {  // expected-note {{prior use here}}
+  // expected-error@+1 {{use of value '%arg0' expects different type than prior uses: '!cir.int<s, 32>' vs '!cir.int<u, 32>'}}
+  %0 = cir.ffs %arg0 : !s32i
   cir.return
 }
 
@@ -1021,9 +1026,9 @@ cir.func @ffs_invalid_input_ty(%arg0 : !u32i) -> () {
 !s32i = !cir.int<s, 32>
 !u32i = !cir.int<u, 32>
 
-cir.func @ffs_invalid_result_ty(%arg0 : !s32i) -> () {
-  // expected-error@+1 {{'cir.bit.ffs' op result #0 must be signed integer type of widths 32/64, but got '!cir.int<u, 32>'}}
-  %0 = cir.bit.ffs(%arg0 : !s32i) : !u32i
+cir.func @ffs_invalid_result_ty(%arg0 : !s32i) -> () {  // expected-note {{prior use here}}
+  // expected-error@+1 {{use of value '%arg0' expects different type than prior uses: '!cir.int<u, 32>' vs '!cir.int<s, 32>'}}
+  %0 = cir.ffs %arg0 : !u32i
   cir.return
 }
 
@@ -1032,8 +1037,8 @@ cir.func @ffs_invalid_result_ty(%arg0 : !s32i) -> () {
 !s32i = !cir.int<s, 32>
 
 cir.func @parity_invalid_input_ty(%arg0 : !s32i) -> () {
-  // expected-error@+1 {{'cir.bit.parity' op operand #0 must be unsigned integer type of widths 32/64, but got '!cir.int<s, 32>'}}
-  %0 = cir.bit.parity(%arg0 : !s32i) : !s32i
+  // expected-error@+1 {{'cir.parity' op operand #0 must be unsigned integer type of widths 32/64, but got '!cir.int<s, 32>'}}
+  %0 = cir.parity %arg0 : !s32i
   cir.return
 }
 
@@ -1042,9 +1047,9 @@ cir.func @parity_invalid_input_ty(%arg0 : !s32i) -> () {
 !u32i = !cir.int<u, 32>
 !s32i = !cir.int<s, 32>
 
-cir.func @parity_invalid_result_ty(%arg0 : !u32i) -> () {
-  // expected-error@+1 {{'cir.bit.parity' op result #0 must be unsigned integer type of widths 32/64, but got '!cir.int<s, 32>'}}
-  %0 = cir.bit.parity(%arg0 : !u32i) : !s32i
+cir.func @parity_invalid_result_ty(%arg0 : !u32i) -> () {  // expected-note {{prior use here}}
+  // expected-error@+1 {{use of value '%arg0' expects different type than prior uses: '!cir.int<s, 32>' vs '!cir.int<u, 32>'}}
+  %0 = cir.parity %arg0 : !s32i
   cir.return
 }
 
@@ -1053,8 +1058,8 @@ cir.func @parity_invalid_result_ty(%arg0 : !u32i) -> () {
 !s32i = !cir.int<s, 32>
 
 cir.func @popcount_invalid_input_ty(%arg0 : !s32i) -> () {
-  // expected-error@+1 {{'cir.bit.popcount' op operand #0 must be unsigned integer type of widths 16/32/64, but got '!cir.int<s, 32>'}}
-  %0 = cir.bit.popcount(%arg0 : !s32i) : !s32i
+  // expected-error@+1 {{'cir.popcount' op operand #0 must be unsigned integer type of widths 16/32/64, but got '!cir.int<s, 32>'}}
+  %0 = cir.popcount %arg0 : !s32i
   cir.return
 }
 
@@ -1063,9 +1068,9 @@ cir.func @popcount_invalid_input_ty(%arg0 : !s32i) -> () {
 !u32i = !cir.int<u, 32>
 !u64i = !cir.int<u, 64>
 
-cir.func @popcount_invalid_result_ty(%arg0 : !u32i) -> () {
-  // expected-error@+1 {{'cir.bit.popcount' op requires the same type for all operands and results}}
-  %0 = cir.bit.popcount(%arg0 : !u32i) : !u64i
+cir.func @popcount_invalid_result_ty(%arg0 : !u32i) -> () {  // expected-note {{prior use here}}
+  // expected-error@+1 {{use of value '%arg0' expects different type than prior uses: '!cir.int<u, 64>' vs '!cir.int<u, 32>'}}
+  %0 = cir.popcount %arg0 : !u64i
   cir.return
 }
 
@@ -1227,28 +1232,35 @@ cir.func @bad_goto() -> () {
 // -----
 
 !u64i = !cir.int<u, 64>
-cir.func @address_space1(%p : !cir.ptr<!u64i, addrspace()>) { // expected-error {{expected keyword for addrspace kind}}
+// expected-error@below {{expected address space keyword}}
+// expected-error@below {{expected keyword for address space kind}}
+cir.func @address_space1(%p : !cir.ptr<!u64i, addrspace()>) {
   cir.return
 }
 
 // -----
 
 !u64i = !cir.int<u, 64>
-cir.func @address_space2(%p : !cir.ptr<!u64i, addrspace(target<>)>) { // expected-error {{expected integer value}}
+// expected-error@below {{expected target address space value}}
+// expected-error@below {{expected integer value}}
+cir.func @address_space2(%p : !cir.ptr<!u64i, addrspace(target<>)>) {
   cir.return
 }
 
 // -----
 
 !u64i = !cir.int<u, 64>
-cir.func @address_space3(%p : !cir.ptr<!u64i, addrspace(target)>) { // expected-error {{expected '<'}}
+// expected-error@below {{expected '<'}}
+cir.func @address_space3(%p : !cir.ptr<!u64i, addrspace(target)>) {
   cir.return
 }
 
 // -----
 
 !u64i = !cir.int<u, 64>
-cir.func @address_space4(%p : !cir.ptr<!u64i, addrspace(foobar)>) { // expected-error {{invalid addrspace kind keyword: foobar}}
+// expected-error@below {{invalid address space kind specification: foobar}}
+// expected-error@below {{expected address space keyword}}
+cir.func @address_space4(%p : !cir.ptr<!u64i, addrspace(foobar)>) {
   cir.return
 }
 
