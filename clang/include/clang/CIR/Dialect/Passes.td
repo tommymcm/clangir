@@ -141,6 +141,21 @@ def GotoSolver : Pass<"cir-goto-solver"> {
   let dependentDialects = ["cir::CIRDialect"];
 }
 
+def PointsToDiagnostic : Pass<"cir-points-to-diagnostics"> {
+  let summary = "Dump points-to information";
+  let description = [{
+    This pass emits remarks for load and store operations containing the set
+    of pointers that are potentially accessed by the operation. This is useful
+    for debugging and understanding the points-to analysis.
+    This pass relies on an intraprocedural, flow-insensitive points-to analysis.
+    It only tracks function local state, i.e., stack objects.
+    In the future, the analysis will support heap-allocated objects,
+    flow-sensitivity, and interprocedural analysis.
+  }];
+  let constructor = "mlir::createPointsToDiagnosticPass()";
+  let dependentDialects = ["cir::CIRDialect"];
+}
+
 def IdiomRecognizer : Pass<"cir-idiom-recognizer"> {
   let summary = "Raise calls to C/C++ libraries to CIR operations";
   let description = [{
