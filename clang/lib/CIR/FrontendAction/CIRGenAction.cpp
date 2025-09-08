@@ -217,7 +217,8 @@ public:
               feOptions.ClangIRLifetimeCheck, lifetimeOpts,
               feOptions.ClangIRIdiomRecognizer, idiomRecognizerOpts,
               feOptions.ClangIRLibOpt, libOptOpts, passOptParsingFailure,
-              codeGenOptions.OptimizationLevel > 0, flattenCIR,
+              codeGenOptions.OptimizationLevel > 0,
+              feOptions.ClangIREnableMoveOpt, flattenCIR,
               !feOptions.ClangIRDirectLowering, enableCCLowering,
               feOptions.ClangIREnableMem2Reg)
               .failed()) {

@@ -3219,6 +3219,8 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
 
   if (Args.hasArg(OPT_fclangir_mem2reg))
     Opts.ClangIREnableMem2Reg = true;
+  if (Args.hasArg(OPT_fclangir_move_opt))
+    Opts.ClangIREnableMoveOpt = true;
   if (Args.hasArg(OPT_aux_target_cpu))
     Opts.AuxTargetCPU = std::string(Args.getLastArgValue(OPT_aux_target_cpu));
   if (Args.hasArg(OPT_aux_target_feature))

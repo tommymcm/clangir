@@ -109,7 +109,7 @@ def SCFPrepare : Pass<"cir-mlir-scf-prepare"> {
 
 def HoistAllocas : Pass<"cir-hoist-allocas"> {
   let summary = "Hoist allocas to the entry of the function";
-  let description = [{ 
+  let description = [{
     This pass hoist all non-dynamic allocas to the entry of the function.
     This is helpful for later code generation.
   }];
@@ -159,7 +159,7 @@ def PointsToDiagnostic : Pass<"cir-points-to-diagnostics"> {
 def LiveObjectDiagnostic : Pass<"cir-live-object-diagnostics"> {
   let summary = "Dump live-object information";
   let description = [{
-    Dump live-object information for all reads/writes in the function.
+    Dump live-object information for all reads/writes in each function.
   }];
   let constructor = "mlir::createLiveObjectDiagnosticPass()";
   let dependentDialects = ["cir::CIRDialect"];
@@ -202,6 +202,27 @@ def LibOpt : Pass<"cir-lib-opt"> {
                "Diagnostic remarks to enable"
                " Supported styles: {all|transforms}", "llvm::cl::ZeroOrMore">,
   ];
+}
+
+def MoveOpt : Pass<"cir-move-opt"> {
+  let summary = "Optimize C/C++ move semantics";
+  let description = [{
+    This pass optimizes C++ move semantics by using higher level information
+    about object lifetimes and value categories. It depends on CIR points-to
+    analysis and live-object analysis to determine when the optimization is
+    safe to perform.
+    This pass is not currently exception safe, it may cause an exception to be
+    thrown, not thrown, or thrown in a different location from the original
+    program behavior. It also assumes that custom copy/move constructors and
+    assignment operators perform their intended purpose, i.e., that they solely
+    copy or move the given object into this object.
+    For these reasons, this pass should be disabled by default.
+    This pass can be improved to support conditional moves. This pass can be
+    further improved by extending the points-to and live-object analyses to be
+    field-sensitive, path-sensitive, interprocedural, and context-sensitive.
+  }];
+  let constructor = "mlir::createMoveOptPass()";
+  let dependentDialects = ["cir::CIRDialect"];
 }
 
 def CallConvLowering : Pass<"cir-call-conv-lowering"> {

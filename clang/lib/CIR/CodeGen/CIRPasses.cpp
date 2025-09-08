@@ -28,8 +28,8 @@ mlir::LogicalResult runCIRToCIRPasses(
     llvm::StringRef lifetimeOpts, bool enableIdiomRecognizer,
     llvm::StringRef idiomRecognizerOpts, bool enableLibOpt,
     llvm::StringRef libOptOpts, std::string &passOptParsingFailure,
-    bool enableCIRSimplify, bool flattenCIR, bool throughMLIR,
-    bool enableCallConvLowering, bool enableMem2Reg) {
+    bool enableCIRSimplify, bool enableCIRMoveOpt, bool flattenCIR,
+    bool throughMLIR, bool enableCallConvLowering, bool enableMem2Reg) {
 
   llvm::TimeTraceScope scope("CIR To CIR Passes");
 
@@ -69,6 +69,9 @@ mlir::LogicalResult runCIRToCIRPasses(
     }
     pm.addPass(std::move(libOpPass));
   }
+
+  if (enableCIRMoveOpt)
+    pm.addPass(mlir::createMoveOptPass(&astContext));
 
   if (enableCIRSimplify)
     pm.addPass(mlir::createCIRSimplifyPass());

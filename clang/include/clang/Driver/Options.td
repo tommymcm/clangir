@@ -3111,6 +3111,10 @@ def fclangir_mem2reg : Flag<["-"], "fclangir-mem2reg">,
   Visibility<[ClangOption, CC1Option]>, Group<f_Group>,
   HelpText<"Enable mem2reg on the flat ClangIR">,
   MarshallingInfoFlag<FrontendOpts<"ClangIREnableMem2Reg">>;
+def fclangir_move_opt : Flag<["-"], "fclangir-move-opt">,
+  Visibility<[ClangOption, CC1Option]>, Group<f_Group>,
+  HelpText<"Enable move semantic optimizations on ClangIR">,
+  MarshallingInfoFlag<FrontendOpts<"ClangIREnableMoveOpt">>;
 
 def clangir_disable_passes : Flag<["-"], "clangir-disable-passes">,
   Visibility<[ClangOption, CC1Option]>,
