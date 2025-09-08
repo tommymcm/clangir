@@ -129,17 +129,28 @@ bool PointsToAnalysis::handleSpecialCall(cir::CallOp call) {
   if (!ast)
     return false;
 
-  if (ast && mlir::isa<cir::ASTCXXMethodDeclInterface>(ast)) {
-    mlir::Value thisPtr = call.getOperand(0);
-    mlir::Value argPtr = call.getOperand(1);
-
-    auto methodDecl = mlir::cast<ASTCXXMethodDeclInterface>(ast);
-    if (methodDecl.isMoveAssignmentOperator()) {
-      handleMove(thisPtr, argPtr);
+  if (auto cxxCtor = mlir::dyn_cast<cir::CXXCtorAttr>(*cxxSpecialMember)) {
+    switch (cxxCtor.getCtorKind()) {
+    case cir::CtorKind::Move:
+      handleMove(call.getOperand(0), call.getOperand(1));
       return true;
+    case cir::CtorKind::Copy:
+      handleCopy(call.getOperand(0), call.getOperand(1));
+      return true;
+    case cir::CtorKind::Default:
+      return true;
+    case cir::CtorKind::Custom:
+      return false;
     }
-    if (methodDecl.isCopyAssignmentOperator()) {
-      handleCopy(thisPtr, argPtr);
+  }
+
+  if (auto cxxAssign = mlir::dyn_cast<cir::CXXAssignAttr>(*cxxSpecialMember)) {
+    switch (cxxAssign.getAssignKind()) {
+    case cir::AssignKind::Move:
+      handleMove(call.getOperand(0), call.getOperand(1));
+      return true;
+    case cir::AssignKind::Copy:
+      handleCopy(call.getOperand(0), call.getOperand(1));
       return true;
     }
 
