@@ -81,6 +81,10 @@ int main(int argc, char **argv) {
     return mlir::createPointsToDiagnosticPass();
   });
 
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return mlir::createLiveObjectDiagnosticPass();
+  });
+
   mlir::registerTransformsPasses();
 
   return failed(MlirOptMain(

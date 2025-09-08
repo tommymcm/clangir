@@ -156,6 +156,15 @@ def PointsToDiagnostic : Pass<"cir-points-to-diagnostics"> {
   let dependentDialects = ["cir::CIRDialect"];
 }
 
+def LiveObjectDiagnostic : Pass<"cir-live-object-diagnostics"> {
+  let summary = "Dump live-object information";
+  let description = [{
+    Dump live-object information for all reads/writes in the function.
+  }];
+  let constructor = "mlir::createLiveObjectDiagnosticPass()";
+  let dependentDialects = ["cir::CIRDialect"];
+}
+
 def IdiomRecognizer : Pass<"cir-idiom-recognizer"> {
   let summary = "Raise calls to C/C++ libraries to CIR operations";
   let description = [{

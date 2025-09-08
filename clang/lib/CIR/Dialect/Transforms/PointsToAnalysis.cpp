@@ -33,6 +33,10 @@ void PointsToAnalysis::runOnOperation() {
 // Unknown pointer is represented by the NULL value.
 mlir::Value PointsToAnalysis::unknown() { return {}; }
 
+bool PointsToAnalysis::escaped(mlir::Value obj) {
+  return memPointsTo[unknown()].contains(obj);
+}
+
 void PointsToAnalysis::initialize(mlir::Operation *op) {
   // TODO: Update this to use mlir::MemorySlot and MemorySlotOpInterface.
 

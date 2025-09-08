@@ -15,6 +15,7 @@ add_clang_library(MLIRCIRTransforms
   CallConvLowering.cpp
   HoistAllocas.cpp
   PointsToAnalysis.cpp
+  LiveObjectAnalysis.cpp
 
   DEPENDS
   MLIRCIRPassIncGen

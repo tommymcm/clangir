@@ -48,6 +48,9 @@ public:
   // Unknown pointer is represented by the NULL value.
   mlir::Value unknown();
 
+  // Queries if the given object escaped.
+  bool escaped(mlir::Value obj);
+
 protected:
   // Data flow initialization.
   void initialize(mlir::Operation *op);
