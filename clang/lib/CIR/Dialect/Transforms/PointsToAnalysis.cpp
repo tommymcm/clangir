@@ -344,8 +344,8 @@ static void insertSorted(std::vector<std::string> &vec, std::string &&val) {
   vec.insert(std::lower_bound(vec.begin(), vec.end(), val), val);
 }
 
-static void dump(PointsToAnalysis &pta, mlir::InFlightDiagnostic &&diag,
-                 mlir::Value ptr) {
+static void dumpSet(PointsToAnalysis &pta, mlir::InFlightDiagnostic &diag,
+                    mlir::Value ptr) {
   // Sort the points-to set so it will be easier to read and test.
   std::vector<std::string> pointsTo;
   for (auto obj : pta.valPointsTo[ptr]) {
@@ -376,12 +376,139 @@ static void dump(PointsToAnalysis &pta, mlir::InFlightDiagnostic &&diag,
   diag << " }";
 }
 
+static bool isCopy(mlir::Operation *op, mlir::Value &dst, mlir::Value &src) {
+  if (auto copyOp = mlir::dyn_cast<cir::CopyOp>(op)) {
+    dst = copyOp.getDst();
+    src = copyOp.getSrc();
+    return true;
+  }
+  if (auto memCpyOp = mlir::dyn_cast<cir::MemCpyOp>(op)) {
+    dst = memCpyOp.getDst();
+    src = memCpyOp.getSrc();
+    return true;
+  }
+  if (auto memCpyInlineOp = mlir::dyn_cast<cir::MemCpyInlineOp>(op)) {
+    dst = memCpyInlineOp.getDst();
+    src = memCpyInlineOp.getSrc();
+    return true;
+  }
+
+  auto callOp = mlir::dyn_cast<cir::CallOp>(op);
+  if (!callOp)
+    return false;
+
+  auto calleeFunc =
+      callOp.getDirectCallee(callOp->getParentOfType<mlir::ModuleOp>());
+  if (!calleeFunc)
+    return false;
+
+  auto cxxSpecialMember = calleeFunc.getCxxSpecialMember();
+  if (!cxxSpecialMember)
+    return false;
+
+  if (auto cxxCtor = mlir::dyn_cast<cir::CXXCtorAttr>(*cxxSpecialMember)) {
+    if (cxxCtor.getCtorKind() != cir::CtorKind::Copy)
+      return false;
+    dst = callOp.getOperand(0);
+    src = callOp.getOperand(1);
+    return true;
+  }
+
+  if (auto cxxAssign = mlir::dyn_cast<cir::CXXAssignAttr>(*cxxSpecialMember)) {
+    if (cxxAssign.getAssignKind() != cir::AssignKind::Copy)
+      return false;
+    dst = op->getOperand(0);
+    src = op->getOperand(1);
+    return true;
+  }
+
+  return false;
+}
+
+static bool isMove(mlir::Operation *op, mlir::Value &dst, mlir::Value &src) {
+  if (auto memMoveOp = mlir::dyn_cast<cir::MemMoveOp>(op)) {
+    dst = memMoveOp.getDst();
+    src = memMoveOp.getSrc();
+    return true;
+  }
+
+  auto callOp = mlir::dyn_cast<cir::CallOp>(op);
+  if (!callOp)
+    return false;
+
+  auto calleeFunc =
+      callOp.getDirectCallee(callOp->getParentOfType<mlir::ModuleOp>());
+  if (!calleeFunc)
+    return false;
+
+  auto cxxSpecialMember = calleeFunc.getCxxSpecialMember();
+  if (!cxxSpecialMember)
+    return false;
+
+  if (auto cxxCtor = mlir::dyn_cast<cir::CXXCtorAttr>(*cxxSpecialMember)) {
+    if (cxxCtor.getCtorKind() != cir::CtorKind::Move)
+      return false;
+    dst = callOp.getOperand(0);
+    src = callOp.getOperand(1);
+    return true;
+  }
+
+  if (auto cxxAssign = mlir::dyn_cast<cir::CXXAssignAttr>(*cxxSpecialMember)) {
+    if (cxxAssign.getAssignKind() != cir::AssignKind::Move)
+      return false;
+    dst = callOp.getOperand(0);
+    src = callOp.getOperand(1);
+    return true;
+  }
+
+  return false;
+}
+
 static void dump(PointsToAnalysis &pta, cir::FuncOp func) {
   func->walk([&](mlir::Operation *op) {
-    if (auto load = mlir::dyn_cast<cir::LoadOp>(op))
-      dump(pta, op->emitRemark("load "), load.getAddr());
-    else if (auto store = mlir::dyn_cast<cir::StoreOp>(op))
-      dump(pta, op->emitRemark("store "), store.getAddr());
+    // Handle memory load/store operations.
+    if (auto load = mlir::dyn_cast<cir::LoadOp>(op)) {
+      mlir::InFlightDiagnostic diag = op->emitRemark("load ");
+      dumpSet(pta, diag, load.getAddr());
+      return;
+    }
+    if (auto store = mlir::dyn_cast<cir::StoreOp>(op)) {
+      mlir::InFlightDiagnostic diag = op->emitRemark("store ");
+      dumpSet(pta, diag, store.getAddr());
+      return;
+    }
+
+    // Handle copy/move operations.
+    mlir::Value dst, src;
+    if (isCopy(op, dst, src)) {
+      mlir::InFlightDiagnostic diag = op->emitRemark("copy from ");
+      dumpSet(pta, diag, src);
+      diag << " to ";
+      dumpSet(pta, diag, dst);
+      return;
+    }
+    if (isMove(op, dst, src)) {
+      mlir::InFlightDiagnostic diag = op->emitRemark("move from ");
+      dumpSet(pta, diag, src);
+      diag << " to ";
+      dumpSet(pta, diag, dst);
+      return;
+    }
+
+    // Handle memory effects.
+    if (auto effect = mlir::dyn_cast<mlir::MemoryEffectOpInterface>(op)) {
+      // Iterate over each operand, reporting memory effects.
+      for (mlir::Value val : op->getOperands()) {
+        if (mlir::hasEffect<mlir::MemoryEffects::Read>(op, val)) {
+          mlir::InFlightDiagnostic diag = op->emitRemark("read from ");
+          dumpSet(pta, diag, val);
+        }
+        if (mlir::hasEffect<mlir::MemoryEffects::Write>(op, val)) {
+          mlir::InFlightDiagnostic diag = op->emitRemark("write to ");
+          dumpSet(pta, diag, val);
+        }
+      }
+    }
   });
 }
 
