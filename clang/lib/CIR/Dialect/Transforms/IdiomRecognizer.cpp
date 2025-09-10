@@ -34,7 +34,8 @@ namespace {
 
 // Recognizes a cir.call that calls a standard library function represented
 // by `TargetOp`, and raise it to that operation.
-template <typename TargetOp> class StdRecognizer {
+// If the target operation is C++ specific, `IsCXX` should be set to true.
+template <typename TargetOp, bool IsCXX = true> class StdRecognizer {
 private:
   // Reserved for template specialization.
   static bool checkArguments(mlir::ValueRange) { return true; }
@@ -48,14 +49,26 @@ private:
   }
 
 public:
+  static bool isDirectCallTo(cir::CallOp call, llvm::StringRef funcName) {
+    auto callee = call.getCallee();
+    if (!callee)
+      return false;
+    return *callee == funcName;
+  }
+
   static bool raise(CallOp call, mlir::MLIRContext &context, bool remark) {
     constexpr int numArgs = TargetOp::getNumArgs();
     if (call.getNumOperands() != numArgs)
       return false;
 
     auto callExprAttr = call.getAstAttr();
+    if (!callExprAttr)
+      return false;
+
     llvm::StringRef stdFuncName = TargetOp::getFunctionName();
-    if (!callExprAttr || !callExprAttr.isStdFunctionCall(stdFuncName))
+    if (IsCXX && !callExprAttr.isStdFunctionCall(stdFuncName))
+      return false;
+    if (!IsCXX && !isDirectCallTo(call, stdFuncName))
       return false;
 
     if (!checkArguments(call.getArgOperands()))
@@ -63,7 +76,7 @@ public:
 
     if (remark)
       mlir::emitRemark(call.getLoc())
-          << "found call to std::" << stdFuncName << "()";
+          << "found call to " << (IsCXX ? "std::" : "") << stdFuncName << "()";
 
     CIRBaseBuilderTy builder(context);
     builder.setInsertionPointAfter(call.getOperation());
@@ -188,20 +201,28 @@ bool IdiomRecognizerPass::raiseIteratorBeginEnd(CallOp call) {
   return true;
 }
 
+// Helper type to create a tuple of StdRecognizer's from a sequence of Op's.
+template <bool IsCXX, typename... TargetOps>
+using StdRecognizersFor = std::tuple<StdRecognizer<TargetOps, IsCXX>...>;
+template <typename... Input>
+using TupleCat = decltype(std::tuple_cat(std::declval<Input>()...));
+
 void IdiomRecognizerPass::recognizeCall(CallOp call) {
   if (raiseIteratorBeginEnd(call))
     return;
 
   bool remark = opts.emitRemarkFoundCalls();
 
-  using StdFunctionsRecognizer = std::tuple<StdRecognizer<StdFindOp>>;
+  using CStdRecognizers = StdRecognizersFor</*IsCXX=*/false, StrLenOp>;
+  using CXXStdRecognizers = StdRecognizersFor</*IsCXX=*/true, StdFindOp>;
+  using StdRecognizers = TupleCat<CStdRecognizers, CXXStdRecognizers>;
 
   // MSVC requires explicitly capturing these variables.
   std::apply(
       [&, call, remark, this](auto... recognizers) {
         (decltype(recognizers)::raise(call, this->getContext(), remark) || ...);
       },
-      StdFunctionsRecognizer());
+      StdRecognizers());
 }
 
 void IdiomRecognizerPass::runOnOperation() {

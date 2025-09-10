@@ -338,4 +338,9 @@ def CIR_AnyFloatOrVecOfFloatType
     let cppFunctionName = "isFPOrVectorOfFPType";
 }
 
+//===----------------------------------------------------------------------===//
+// C null-terminated string types.
+//===----------------------------------------------------------------------===//
+def CIR_StringType : CIR_PtrToType<CIR_SInt8>;
+
 #endif // CLANG_CIR_DIALECT_IR_CIRTYPECONSTRAINTS_TD

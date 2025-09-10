@@ -62,4 +62,11 @@ def CIR_IterEndOp: CIR_StdOp<"end",
   (ins CIR_AnyType:$container),
   (outs CIR_AnyType:$result)>;
 
+//===----------------------------------------------------------------------===//
+// C String Library Ops
+//===----------------------------------------------------------------------===//
+def CIR_StrLenOp : CIR_StdOp<"strlen",
+  (ins CIR_StringType:$string),
+  (outs CIR_AnyFundamentalIntType:$result)>;
+
 #endif
