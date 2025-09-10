@@ -14,7 +14,7 @@ int test_strlen_eq_zero(const char *str) {
 // CHECK:           %[[CMP:.*]] = cir.cmp(eq, %[[FIRST_INT]], %[[ZERO]]) : !u64i, !cir.bool
 // CHECK:         }
 
-    return strlen(str) == 0ULL;
+    return strlen(str) == 0ULL; // expected-remark "strlen opt: transformed strlen into load"
 }
 
 // Test strlen(str) <|>= len --> memchr(str, 0, len) <|>= len
@@ -31,7 +31,7 @@ int test_strlen_lt_var(const char *str, size_t len) {
   // CHECK:           %[[CMP:.*]] = cir.cmp(lt, %[[DIST]], %[[LEN]]) : !u64i, !cir.bool
   // CHECK:         }
 
-    return strlen(str) < len;
+    return strlen(str) < len; // expected-remark "strlen opt: transformed strlen into memchr"
 }
 
 // Test strlen(str) >|<=|==|!= len --> memchr(str, 0, len + 1) >|<=|==|!= len
@@ -42,7 +42,7 @@ int test_strlen_eq_var(const char *str, size_t len) {
   // CHECK:           %[[RESULT:.*]] = cir.libc.memchr(%{{.*}}, %{{.*}}, %[[LEN_PLUS_ONE]])
   // CHECK:         }
 
-    return strlen(str) == len;
+    return strlen(str) == len; // expected-remark "strlen opt: transformed strlen into memchr"
 }
 
 // Applicability tests:
@@ -55,7 +55,17 @@ int test_strlen_multiple_users(const char *str, size_t len1, size_t len2) {
   // CHECK:         }
 
   size_t len = strlen(str);
-  return len1 < len && len < len2;
+  return len1 < len && len < len2; // expected-remark "strlen opt: result of strlen has more than one use"
+}
+
+// Non-comparison user, not applicable.
+int test_strlen_non_cmp_users(const char *str) {
+  // Check that we still have a strlen op.
+  // CHECK-LABEL:   cir.func{{.*}} @_Z25test_strlen_non_cmp_usersPKc(
+  // CHECK:           %[[LEN:.*]] = {{.*}}strlen(
+  // CHECK:         }
+
+  return strlen(str); // expected-remark "strlen opt: could not find cir.cmp user of strlen result"
 }
 
 // Memory operation blocks move.
@@ -67,5 +77,15 @@ int test_strlen_store_between_def_and_use(const char *str, size_t *ptr) {
 
   size_t len = strlen(str);
   *ptr = 10;
-  return len < *ptr;
+  return len < *ptr; // expected-remark "strlen opt: could not move max length before strlen"
+}
+
+// Can't adjust value being compared.
+int test_strlen_cant_adjust(const char *str) {
+  // Check that we still have either a strlen op, or a call to strlen.
+  // CHECK-LABEL:   cir.func{{.*}} @_Z23test_strlen_cant_adjustPKc(
+  // CHECK:           %[[LEN:.*]] = {{.*}}strlen
+  // CHECK:         }
+
+  return strlen(str) < 10.0; // expected-remark "strlen opt: could not adjust the max value"
 }

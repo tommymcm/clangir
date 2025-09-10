@@ -462,8 +462,17 @@ void LibOptPass::xformStrLenIntoMemchr(StrLenOp strLen) {
   }
 
   // If we couldn't find a single cmp, N/A.
-  if (!cmp)
+  if (!cmp) {
+    if (opts.emitRemarkAll()) {
+      if (!len.hasOneUse())
+        strLen->emitRemark(
+            "strlen opt: result of strlen has more than one user");
+      else
+        strLen->emitRemark(
+            "strlen opt: could not find cir.cmp user of strlen result");
+    }
     return;
+  }
 
   // Determine the max length and whether to add one.
   bool flip = operand->getOperandNumber() != 0;
@@ -475,8 +484,12 @@ void LibOptPass::xformStrLenIntoMemchr(StrLenOp strLen) {
   auto maxDef = max.getDefiningOp();
   if (maxDef && strLen && !isa<cir::ConstantOp>(maxDef)) {
     // Move the definition before the StrLenOp, if possible.
-    if (!moveBeforeSafely(maxDef, strLen))
+    if (!moveBeforeSafely(maxDef, strLen)) {
+      if (opts.emitRemarkAll())
+        strLen->emitRemark(
+            "strlen opt: could not move max length before strlen");
       return;
+    }
   }
 
   auto loc = strLen.getLoc();
@@ -484,14 +497,19 @@ void LibOptPass::xformStrLenIntoMemchr(StrLenOp strLen) {
   builder.setInsertionPoint(strLen);
 
   // Handle the special case where max is zero
-  if (handleZeroMax(max, builder, loc, strLen, cmp, flip))
-    return; // Zero max case was handled, early return
+  if (handleZeroMax(max, builder, loc, strLen, cmp, flip)) {
+    if (opts.emitRemarkTransforms())
+      strLen->emitRemark("strlen opt: transformed strlen into load");
+    return;
+  }
 
   // Create the adjusted max value, handling constants and non-constants.
   max = createAdjustedMax(max, addOne, builder, loc);
-  // If we failed to adjust the max value, early return.
-  if (!max)
+  if (!max) {
+    if (opts.emitRemarkAll())
+      strLen->emitRemark("strlen opt: could not adjust the max value");
     return;
+  }
 
   // Convert the string to a void*
   mlir::Type lenTy = strLen.getResult().getType();
@@ -516,6 +534,9 @@ void LibOptPass::xformStrLenIntoMemchr(StrLenOp strLen) {
   auto memChrStr = cir::CastOp::create(
       builder, loc, strTy, cir::CastKind::bitcast, memChr.getResult());
   auto ptrDiff = cir::PtrDiffOp::create(builder, loc, lenTy, memChrStr, str);
+
+  if (opts.emitRemarkTransforms())
+    strLen->emitRemark("strlen opt: transformed strlen into memchr");
 
   strLen.replaceAllUsesWith(ptrDiff.getResult());
   strLen.erase();
