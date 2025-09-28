@@ -306,6 +306,44 @@ mlir::Value CIRGenFunction::emitX86BuiltinExpr(unsigned BuiltinID,
     Ops.push_back(emitScalarOrConstFoldImmArg(ICEArguments, i, E));
   }
 
+  // OG has unordered comparison as a form of optimization in addition to
+  // ordered comparison, while CIR doesn't.
+  //
+  // This means that we can't encode the comparison code of UGT (unordered
+  // greater than), at least not at the CIR level.
+  //
+  // The boolean shouldInvert compensates for this.
+  // For example: to get to the comparison code UGT, we pass in
+  // getVectorFCmpIR(OLE, shouldInvert = true) since OLE is the inverse of UGT.
+
+  // There are several ways to support this otherwise:
+  // - register extra CmpOpKind for unordered comparison types and build the
+  // translation code for
+  //    to go from CIR -> LLVM dialect. Notice we get this naturally with
+  //    shouldInvert, benefiting from existing infrastructure, albeit having to
+  //    generate an extra `not` at CIR).
+  // - Just add extra comparison code to a new VecCmpOpKind instead of
+  // cluttering CmpOpKind.
+  // - Add a boolean in VecCmpOp to indicate if it's doing unordered or ordered
+  // comparison
+  // - Just emit the intrinsics call instead of calling this helper, see how the
+  // LLVM lowering handles this.
+  auto getVectorFCmpIR = [this, &Ops, &E](cir::CmpOpKind pred,
+                                          bool shouldInvert, bool isSignaling) {
+    assert(!cir::MissingFeatures::CGFPOptionsRAII());
+    auto loc = getLoc(E->getExprLoc());
+    mlir::Value cmp;
+    if (builder.getIsFPConstrained())
+      // TODO: Add isSignaling boolean once emitConstrainedFPCall implemented
+      assert(cir::MissingFeatures::emitConstrainedFPCall());
+    else
+      cmp = builder.createVecCompare(loc, pred, Ops[0], Ops[1]);
+
+    mlir::Value bitCast = builder.createBitcast(
+        shouldInvert ? builder.createNot(cmp) : cmp, Ops[0].getType());
+    return bitCast;
+  };
+
   switch (BuiltinID) {
   default:
     return nullptr;
@@ -1164,12 +1202,55 @@ mlir::Value CIRGenFunction::emitX86BuiltinExpr(unsigned BuiltinID,
   }
   case X86::BI__builtin_ia32_pshuflw:
   case X86::BI__builtin_ia32_pshuflw256:
-  case X86::BI__builtin_ia32_pshuflw512:
-    llvm_unreachable("pshuflw NYI");
+  case X86::BI__builtin_ia32_pshuflw512: {
+
+    unsigned imm =
+        Ops[1].getDefiningOp<cir::ConstantOp>().getIntValue().getZExtValue();
+    auto Ty = cast<cir::VectorType>(Ops[0].getType());
+    unsigned numElts = Ty.getSize();
+
+    // Splat the 8-bits of immediate 4 times to help the loop wrap around.
+    imm = (imm & 0xff) * 0x01010101;
+
+    int64_t indices[32];
+    for (unsigned l = 0; l != numElts; l += 8) {
+      for (unsigned i = 0; i != 4; ++i) {
+        indices[l + i] = l + (imm & 3);
+        imm >>= 2;
+      }
+      for (unsigned i = 4; i != 8; ++i)
+        indices[l + i] = l + i;
+    }
+
+    return builder.createVecShuffle(getLoc(E->getExprLoc()), Ops[0],
+                                    ArrayRef(indices, numElts));
+  }
   case X86::BI__builtin_ia32_pshufhw:
   case X86::BI__builtin_ia32_pshufhw256:
-  case X86::BI__builtin_ia32_pshufhw512:
-    llvm_unreachable("pshufhw NYI");
+  case X86::BI__builtin_ia32_pshufhw512: {
+
+    unsigned imm =
+        Ops[1].getDefiningOp<cir::ConstantOp>().getIntValue().getZExtValue();
+    auto ty = cast<cir::VectorType>(Ops[0].getType());
+    unsigned numElts = ty.getSize();
+
+    // Splat the 8-bits of immediate 4 times to help the loop wrap around.
+    imm = (imm & 0xff) * 0x01010101;
+
+    int64_t indices[32];
+    for (unsigned l = 0; l != numElts; l += 8) {
+      for (unsigned i = 0; i != 4; ++i)
+        indices[l + i] = l + i;
+      for (unsigned i = 4; i != 8; ++i) {
+        indices[l + i] = l + 4 + (imm & 3);
+        imm >>= 2;
+      }
+    }
+
+    return builder.createVecShuffle(getLoc(E->getExprLoc()), Ops[0],
+                                    ArrayRef(indices, numElts));
+  }
+
   case X86::BI__builtin_ia32_pshufd:
   case X86::BI__builtin_ia32_pshufd256:
   case X86::BI__builtin_ia32_pshufd512:
@@ -1204,8 +1285,31 @@ mlir::Value CIRGenFunction::emitX86BuiltinExpr(unsigned BuiltinID,
   case X86::BI__builtin_ia32_shufpd512:
   case X86::BI__builtin_ia32_shufps:
   case X86::BI__builtin_ia32_shufps256:
-  case X86::BI__builtin_ia32_shufps512:
-    llvm_unreachable("shufpd NYI");
+  case X86::BI__builtin_ia32_shufps512: {
+    unsigned imm =
+        Ops[2].getDefiningOp<cir::ConstantOp>().getIntValue().getZExtValue();
+    auto ty = cast<cir::VectorType>(Ops[0].getType());
+    unsigned numElts = ty.getSize();
+    unsigned numLanes = CGM.getDataLayout().getTypeSizeInBits(ty) / 128;
+    unsigned numLaneElts = numElts / numLanes;
+
+    // Splat the 8-bits of immediate 4 times to help the loop wrap around.
+    imm = (imm & 0xff) * 0x01010101;
+
+    int64_t indices[16];
+    for (unsigned l = 0; l != numElts; l += numLaneElts) {
+      for (unsigned i = 0; i != numLaneElts; ++i) {
+        unsigned index = imm % numLaneElts;
+        imm /= numLaneElts;
+        if (i >= (numLaneElts / 2))
+          index += numElts;
+        indices[l + i] = l + index;
+      }
+    }
+
+    return builder.createVecShuffle(getLoc(E->getExprLoc()), Ops[0], Ops[1],
+                                    ArrayRef(indices, numElts));
+  }
   case X86::BI__builtin_ia32_permdi256:
   case X86::BI__builtin_ia32_permdf256:
   case X86::BI__builtin_ia32_permdi512:
@@ -1213,8 +1317,42 @@ mlir::Value CIRGenFunction::emitX86BuiltinExpr(unsigned BuiltinID,
     llvm_unreachable("permdi NYI");
   case X86::BI__builtin_ia32_palignr128:
   case X86::BI__builtin_ia32_palignr256:
-  case X86::BI__builtin_ia32_palignr512:
-    llvm_unreachable("palignr NYI");
+  case X86::BI__builtin_ia32_palignr512: {
+    unsigned shiftVal =
+        Ops[2].getDefiningOp<cir::ConstantOp>().getIntValue().getZExtValue() &
+        0xff;
+
+    unsigned numElts = cast<cir::VectorType>(Ops[0].getType()).getSize();
+    assert(numElts % 16 == 0);
+
+    // If palignr is shifting the pair of vectors more than the size of two
+    // lanes, emit zero.
+    if (shiftVal >= 32)
+      return builder.getNullValue(convertType(E->getType()),
+                                  getLoc(E->getExprLoc()));
+
+    // If palignr is shifting the pair of input vectors more than one lane,
+    // but less than two lanes, convert to shifting in zeroes.
+    if (shiftVal > 16) {
+      shiftVal -= 16;
+      Ops[1] = Ops[0];
+      Ops[0] = builder.getNullValue(Ops[0].getType(), getLoc(E->getExprLoc()));
+    }
+
+    int64_t indices[64];
+    // 256-bit palignr operates on 128-bit lanes so we need to handle that
+    for (unsigned l = 0; l != numElts; l += 16) {
+      for (unsigned i = 0; i != 16; ++i) {
+        unsigned idx = shiftVal + i;
+        if (idx >= 16)
+          idx += numElts - 16; // End of lane, switch operand.
+        indices[l + i] = idx + l;
+      }
+    }
+
+    return builder.createVecShuffle(getLoc(E->getExprLoc()), Ops[1], Ops[0],
+                                    ArrayRef(indices, numElts));
+  }
   case X86::BI__builtin_ia32_alignd128:
   case X86::BI__builtin_ia32_alignd256:
   case X86::BI__builtin_ia32_alignd512:
@@ -1602,10 +1740,12 @@ mlir::Value CIRGenFunction::emitX86BuiltinExpr(unsigned BuiltinID,
     llvm_unreachable("cmpneqps NYI");
   case X86::BI__builtin_ia32_cmpnltps:
   case X86::BI__builtin_ia32_cmpnltpd:
-    llvm_unreachable("cmpnltps NYI");
+    return getVectorFCmpIR(cir::CmpOpKind::lt, /*shouldInvert=*/true,
+                           /*isSignaling=*/true);
   case X86::BI__builtin_ia32_cmpnleps:
   case X86::BI__builtin_ia32_cmpnlepd:
-    llvm_unreachable("cmpnleps NYI");
+    return getVectorFCmpIR(cir::CmpOpKind::le, /*shouldInvert=*/true,
+                           /*isSignaling=*/true);
   case X86::BI__builtin_ia32_cmpordps:
   case X86::BI__builtin_ia32_cmpordpd:
     llvm_unreachable("cmpordps NYI");

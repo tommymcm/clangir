@@ -303,7 +303,9 @@ RValue CIRGenFunction::emitCXXMemberOrOperatorMemberCallExpr(
     assert(ReturnValue.isNull() && "Destructor shouldn't have return value");
     if (useVirtualCall) {
       CIRGenFunction* CGF = CGM.getCurrCIRGenFun();
-      CGM.getCXXABI().emitVirtualDestructorCall(*CGF, dtor, Dtor_Complete,This.getAddress(), dyn_cast<CXXMemberCallExpr>(CE));
+      CGM.getCXXABI().emitVirtualDestructorCall(
+          *CGF, dtor, Dtor_Complete, This.getAddress(),
+          dyn_cast<CXXMemberCallExpr>(CE));
     } else {
       GlobalDecl globalDecl(dtor, Dtor_Complete);
       CIRGenCallee Callee;
@@ -372,6 +374,11 @@ CIRGenFunction::emitCXXOperatorMemberCallExpr(const CXXOperatorCallExpr *E,
   return emitCXXMemberOrOperatorMemberCallExpr(
       E, MD, ReturnValue, /*HasQualifier=*/false, /*Qualifier=*/nullptr,
       /*IsArrow=*/false, E->getArg(0));
+}
+
+RValue CIRGenFunction::emitCUDAKernelCallExpr(const CUDAKernelCallExpr *E,
+                                              ReturnValueSlot ReturnValue) {
+  return CGM.getCUDARuntime().emitCUDAKernelCallExpr(*this, E, ReturnValue);
 }
 
 static void emitNullBaseClassInitialization(CIRGenFunction &CGF,

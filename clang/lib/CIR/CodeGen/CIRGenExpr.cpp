@@ -287,7 +287,8 @@ LValue CIRGenFunction::emitLValueForBitField(LValue base,
   const RecordDecl *rec = field->getParent();
   auto &layout = CGM.getTypes().getCIRGenRecordLayout(field->getParent());
   auto &info = layout.getBitFieldInfo(field);
-  auto useVolatile = useVolatileForBitField(CGM, base, info, field);
+  [[maybe_unused]] auto useVolatile =
+      useVolatileForBitField(CGM, base, info, field);
   unsigned Idx = layout.getCIRFieldNo(field);
 
   if ((IsInPreservedAIRegion ||
@@ -532,9 +533,11 @@ static CIRGenCallee emitDirectCallee(CIRGenModule &CGM, GlobalDecl GD) {
       return CIRGenCallee::forBuiltin(builtinID, FD);
   }
 
-  auto CalleePtr = emitFunctionDeclPointer(CGM, GD);
+  mlir::Operation *CalleePtr = emitFunctionDeclPointer(CGM, GD);
 
-  assert(!CGM.getLangOpts().CUDA && "NYI");
+  if (CGM.getLangOpts().CUDA && !CGM.getLangOpts().CUDAIsDevice &&
+      FD->hasAttr<CUDAGlobalAttr>())
+    CalleePtr = CGM.getCUDARuntime().getKernelStub(CalleePtr);
 
   return CIRGenCallee::forDirect(CalleePtr, GD);
 }
@@ -934,7 +937,8 @@ static LValue emitGlobalVarDeclLValue(CIRGenFunction &CGF, const Expr *E,
   }
   LValue LV;
   if (VD->getType()->isReferenceType())
-    assert(0 && "NYI");
+    LV = CGF.emitLoadOfReferenceLValue(Addr, CGF.getLoc(E->getExprLoc()),
+                                       VD->getType(), AlignmentSource::Decl);
   else
     LV = CGF.makeAddrLValue(Addr, T, AlignmentSource::Decl);
   assert(!cir::MissingFeatures::setObjCGCLValueClass() && "NYI");
@@ -1404,7 +1408,9 @@ RValue CIRGenFunction::emitCallExpr(const clang::CallExpr *E,
   if (const auto *CE = dyn_cast<CXXMemberCallExpr>(E))
     return emitCXXMemberCallExpr(CE, ReturnValue);
 
-  assert(!dyn_cast<CUDAKernelCallExpr>(E) && "CUDA NYI");
+  if (const auto *CE = dyn_cast<CUDAKernelCallExpr>(E))
+    return emitCUDAKernelCallExpr(CE, ReturnValue);
+
   if (const auto *CE = dyn_cast<CXXOperatorCallExpr>(E))
     if (const CXXMethodDecl *MD =
             dyn_cast_or_null<CXXMethodDecl>(CE->getCalleeDecl()))
@@ -2015,7 +2021,25 @@ LValue CIRGenFunction::emitCastLValue(const CastExpr *E) {
   case CK_ToUnion:
     assert(0 && "NYI");
   case CK_BaseToDerived: {
-    assert(0 && "NYI");
+    const auto *derivedClassTy = E->getType()->castAs<RecordType>();
+    auto *derivedClassDecl = cast<CXXRecordDecl>(derivedClassTy->getDecl());
+
+    LValue lv = emitLValue(E->getSubExpr());
+
+    // Perform the base-to-derived conversion
+    Address derived = getAddressOfDerivedClass(
+        lv.getAddress(), derivedClassDecl, E->path_begin(), E->path_end(),
+        /*NullCheckValue=*/false);
+    // C++11 [expr.static.cast]p2: Behavior is undefined if a downcast is
+    // performed and the object is not of the derived type.
+    if (sanitizePerformTypeCheck())
+      llvm_unreachable("TCK_DowncastReference NYI");
+
+    if (SanOpts.has(SanitizerKind::CFIDerivedCast))
+      llvm_unreachable("CFITypeCheckKind NYI");
+
+    return makeAddrLValue(derived, E->getType(), lv.getBaseInfo(),
+                          CGM.getTBAAInfoForSubobject(lv, E->getType()));
   }
   case CK_LValueBitCast: {
     // This must be a reinterpret_cast (or c-style equivalent).

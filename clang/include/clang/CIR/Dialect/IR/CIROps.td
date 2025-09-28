@@ -386,6 +386,24 @@ def CIR_PtrDiffOp : CIR_Op<"ptr_diff", [Pure, SameTypeOperands]> {
 //===----------------------------------------------------------------------===//
 // PtrStrideOp
 //===----------------------------------------------------------------------===//
+def CIR_GEPNone : I32BitEnumCaseNone<"none">;
+def CIR_GEPInboundsFlag : I32BitEnumCaseBit<"inboundsFlag", 0, "inbounds_flag">;
+def CIR_GEPNusw : I32BitEnumCaseBit<"nusw", 1>;
+def CIR_GEPNuw : I32BitEnumCaseBit<"nuw", 2>;
+def CIR_GEPInbounds
+    : BitEnumCaseGroup<"inbounds", [CIR_GEPInboundsFlag, CIR_GEPNusw]>;
+
+def CIR_GEPNoWrapFlags
+    : CIR_I32BitEnum<"CIR_GEPNoWrapFlags", "::cir::CIR_GEPNoWrapFlags",
+                     [CIR_GEPNone, CIR_GEPInboundsFlag, CIR_GEPNusw, CIR_GEPNuw,
+                      CIR_GEPInbounds]> {
+  let cppNamespace = "::cir";
+  let printBitEnumPrimaryGroups = 1;
+}
+
+def CIR_GEPNoWrapFlagsProp : EnumProp<CIR_GEPNoWrapFlags> {
+  let defaultValue = interfaceType#"::none";
+}
 
 def CIR_PtrStrideOp : CIR_Op<"ptr_stride",[
   Pure, AllTypesMatch<["base", "result"]>
@@ -397,19 +415,23 @@ def CIR_PtrStrideOp : CIR_Op<"ptr_stride",[
 
     ```mlir
     %3 = cir.const 0 : i32
+
     %4 = cir.ptr_stride(%2 : !cir.ptr<i32>, %3 : i32), !cir.ptr<i32>
+
+    %5 = cir.ptr_stride(%2 : !cir.ptr<i32>, %3 : i32, inbounds), !cir.ptr<i32>
+
+    %6 = cir.ptr_stride(%2 : !cir.ptr<i32>, %3 : i32, inbounds|nuw), !cir.ptr<i32>
+
     ```
   }];
 
-  let arguments = (ins
-    CIR_PointerType:$base,
-    CIR_AnyFundamentalIntType:$stride
-  );
+  let arguments = (ins CIR_PointerType:$base, CIR_AnyFundamentalIntType:$stride,
+      CIR_GEPNoWrapFlagsProp:$noWrapFlags);
 
   let results = (outs CIR_PointerType:$result);
 
   let assemblyFormat = [{
-    $base`,` $stride `:` functional-type(operands, results) attr-dict
+    ($noWrapFlags^)? $base`,` $stride `:` functional-type(operands, results) attr-dict
   }];
 
   let extraClassDeclaration = [{
@@ -4703,6 +4725,36 @@ def CIR_EhTypeIdOp : CIR_Op<"eh.typeid",
   }];
 }
 
+def CIR_EhSetjmpOp : CIR_Op<"eh.setjmp"> {
+  let summary = "CIR setjmp operation";
+  let description = [{
+    Saves call-site information (e.g., stack pointer, instruction
+    pointer, signal mask, and other registers) in memory at `env` for use by longjmp(). In this case,
+    setjmp() returns 0. Following a successful longjmp(), execution proceeds
+    from cir.eh.setjmp with the operation yielding a non-zero value.
+
+    The presence of the `builtin` attribute refers to the setjmp() function; the lack of the attribute refers
+    to the _setjmp() function.
+
+    Examples:
+    ```mlir
+      // Specify setjmp is builtin.
+      %0 = cir.eh.setjmp builtin %arg0 : (!cir.ptr<!cir.void>) -> !s32i
+
+      // Specify setjmp is not builtin.
+      %0 = cir.eh.setjmp %arg0 : (!cir.ptr<!cir.void>) -> !s32i
+    ```
+  }];
+  let arguments = (ins CIR_PointerType:$env, UnitAttr:$is_builtin);
+
+  let results = (outs CIR_SInt32:$res);
+
+  let assemblyFormat = [{
+      (`builtin` $is_builtin^)?
+      $env `:` functional-type($env, results) attr-dict
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // CopyOp
 //===----------------------------------------------------------------------===//
@@ -6063,6 +6115,39 @@ def CIR_LinkerOptionsOp : CIR_Op<"linker_options", [
 
   let assemblyFormat = [{
     $options attr-dict
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// BlockAddressOp
+//===----------------------------------------------------------------------===//
+
+def CIR_BlockAddressOp : CIR_Op<"blockaddress", [Pure]> {
+  let summary = "Get the address of a cir.label within a function";
+  let description = [{
+    The `cir.blockaddress` operation takes a function name and a label and
+    produces a pointer value that represents the address of that cir.label within
+    the specified function.
+
+    This operation models GCC's "labels as values" extension (`&&label`), which
+    allows taking the address of a local label and using it as a computed
+    jump target (e.g., with `goto *addr;`).
+
+    Example:
+    ```mlir
+    %1 = cir.alloca !cir.ptr<!void>, !cir.ptr<!cir.ptr<!void>>, ["ptr", init] {alignment = 8 : i64}
+    %addr = cir.blockaddress("foo", "label") -> !cir.ptr<!cir.void>
+    cir.store align(8) %addr, %1 : !cir.ptr<!void>, !cir.ptr<!cir.ptr<!void>>
+    cir.br ^bb1
+   ^bb1:
+    cir.label "label"
+    ```
+  }];
+
+  let arguments = (ins FlatSymbolRefAttr:$func, StrAttr:$label);
+  let results = (outs CIR_VoidPtrType:$addr);
+  let assemblyFormat = [{
+    `(` $func `,` $label `)` `->` qualified(type($addr)) attr-dict
   }];
 }
 

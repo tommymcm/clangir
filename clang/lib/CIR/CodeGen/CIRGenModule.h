@@ -359,7 +359,7 @@ public:
   cir::GlobalViewAttr
   getAddrOfGlobalVarAttr(const VarDecl *D, mlir::Type Ty = {},
                          ForDefinition_t IsForDefinition = NotForDefinition);
-
+  cir::FuncOp getAddrOfThunk(StringRef name, mlir::Type fnTy, GlobalDecl gd);
   /// Get a reference to the target of VD.
   mlir::Operation *getWeakRefReference(const ValueDecl *VD);
 
@@ -874,6 +874,11 @@ public:
   cir::FuncOp createCIRBuiltinFunction(mlir::Location loc, llvm::StringRef name,
                                        cir::FuncType Ty,
                                        const clang::FunctionDecl *FD);
+
+  /// Sets the CXX special member attribute for the function based on the
+  /// function declaration.
+  void setCXXSpecialMemberAttr(cir::FuncOp func,
+                               const clang::FunctionDecl *funcDecl);
 
   cir::FuncOp createRuntimeFunction(cir::FuncType Ty, llvm::StringRef Name,
                                     mlir::ArrayAttr = {}, bool Local = false,

@@ -17,8 +17,8 @@
 #include "TargetInfo.h"
 #include "clang/CIR/MissingFeatures.h"
 
-#include "clang/AST/StmtVisitor.h"
 #include "clang/AST/ExprCXX.h"
+#include "clang/AST/StmtVisitor.h"
 #include "clang/CIR/Dialect/IR/CIRAttrs.h"
 #include "clang/CIR/Dialect/IR/CIRDataLayout.h"
 #include "clang/CIR/Dialect/IR/CIRDialect.h"
@@ -226,8 +226,18 @@ public:
   }
 
   mlir::Value VisitUnaryExprOrTypeTraitExpr(const UnaryExprOrTypeTraitExpr *E);
-  mlir::Value VisitAddrLabelExpr(const AddrLabelExpr *E) {
-    llvm_unreachable("NYI");
+
+  mlir::Value VisitAddrLabelExpr(const AddrLabelExpr *e) {
+    auto func = cast<cir::FuncOp>(CGF.CurFn);
+    llvm::StringRef symName = func.getSymName();
+    mlir::FlatSymbolRefAttr funName =
+        mlir::FlatSymbolRefAttr::get(&CGF.getMLIRContext(), symName);
+    mlir::StringAttr labelName =
+        mlir::StringAttr::get(&CGF.getMLIRContext(), e->getLabel()->getName());
+    return cir::BlockAddressOp::create(Builder, CGF.getLoc(e->getSourceRange()),
+                                       CGF.convertType(e->getType()), funName,
+                                       labelName);
+    ;
   }
   mlir::Value VisitSizeOfPackExpr(SizeOfPackExpr *E) {
     llvm_unreachable("NYI");
@@ -2842,10 +2852,16 @@ mlir::Value CIRGenFunction::emitCheckedInBoundsGEP(
   assert(IdxList.size() == 1 && "multi-index ptr arithmetic NYI");
   mlir::Value GEPVal =
       builder.create<cir::PtrStrideOp>(CGM.getLoc(Loc), PtrTy, Ptr, IdxList[0]);
-
   // If the pointer overflow sanitizer isn't enabled, do nothing.
-  if (!SanOpts.has(SanitizerKind::PointerOverflow))
-    return GEPVal;
+  if (!SanOpts.has(SanitizerKind::PointerOverflow)) {
+    cir::CIR_GEPNoWrapFlags nwFlags = cir::CIR_GEPNoWrapFlags::inbounds;
+    if (!SignedIndices && !IsSubtraction)
+      nwFlags = nwFlags | cir::CIR_GEPNoWrapFlags::nuw;
+    return builder.create<cir::PtrStrideOp>(CGM.getLoc(Loc), PtrTy, Ptr,
+                                            IdxList[0], nwFlags);
+  }
+
+  return GEPVal;
 
   // TODO(cir): the unreachable code below hides a substantial amount of code
   // from the original codegen related with pointer overflow sanitizer.
